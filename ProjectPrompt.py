@@ -81,3 +81,28 @@ def numerical_jacobian_G(x_next: np.ndarray, x_prev: np.ndarray, t_next: float, 
         g_minus = (x_next - dx) - x_prev - h * rhs_nonlinear(t_next, x_next - dx, gains, p)
         J_mat[:, j] = (g_plus - g_minus) / (2.0 * step)
     return J_mat
+
+def integrate_backward_euler(gains, h: float = 1e-3, p: dict = PARAMS, tol: float = 1e-10, max_iter: int = 25):
+    n_steps = int(np.round(p["t_end"] / h))
+    t_grid = np.linspace(0.0, n_steps * h, n_steps + 1)
+    X = np.zeros((n_steps + 1, 4), dtype=float)
+
+    for k in range(n_steps):
+        t_next = t_grid[k + 1]
+        x_prev = X[k]
+        # Initial guess: explicit Euler predictor
+        x_curr = x_prev + h * rhs_nonlinear(t_grid[k], x_prev, gains, p)
+
+        for _ in range(max_iter):
+            G = x_curr - x_prev - h * rhs_nonlinear(t_next, x_curr, gains, p)
+            if np.linalg.norm(G, ord=np.inf) < tol:
+                break
+            JG = numerical_jacobian_G(x_curr, x_prev, t_next, h, gains, p)
+            delta = solve_linear_pp(JG, -G)
+            x_curr = x_curr + delta
+            if np.linalg.norm(delta, ord=np.inf) < tol:
+                break
+
+        X[k + 1] = x_curr
+
+    return t_grid, X
