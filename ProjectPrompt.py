@@ -214,3 +214,88 @@ def find_poly_roots_nr(coeffs: np.ndarray, seeds=None):
         active = deflate_linear(active, r_defl)
 
     return np.array(raw_roots, dtype=complex), logs
+
+# ==============================================================================
+# 5. METRICS & LINEAR INTERPOLATION FOR SETTLING TIME
+# ==============================================================================
+def extract_metrics(t: np.ndarray, X: np.ndarray, p: dict = PARAMS):
+    omega = X[:, 1]
+    w_ref = p["omega_ref"]
+    band = 0.02 * w_ref
+
+    # Overshoot (%OS) over full horizon
+    max_omega = float(np.max(omega))
+    pct_os = max(0.0, (max_omega - w_ref) / w_ref * 100.0)
+
+    # Settling time t_s on 0 <= t < t_L using linear interpolation at band crossings
+    mask_pre = t < p["t_L"]
+    t_pre = t[mask_pre]
+    err_pre = np.abs(omega[mask_pre] - w_ref) - band  # <= 0 means inside +-2% band
+
+    # Find last index where error transitions from > 0 to <= 0 (or <= 0 to > 0)
+    t_s = None
+    t_s_unc = np.nan
+    for idx in range(len(t_pre) - 1):
+        if err_pre[idx] > 0.0 and err_pre[idx + 1] <= 0.0:
+            # Linear interpolation for zero crossing of err_pre
+            frac = -err_pre[idx] / (err_pre[idx + 1] - err_pre[idx])
+            t_cross = t_pre[idx] + frac * (t_pre[idx + 1] - t_pre[idx])
+            # Verify it stays within band after t_cross up to t_pre[-1]
+            if np.all(np.abs(omega[mask_pre][idx + 1 :] - w_ref) <= band + 1e-12):
+                t_s = float(t_cross)
+                dt_local = float(t_pre[idx + 1] - t_pre[idx])
+                t_s_unc = 0.5 * dt_local  # conservative bracket half-width estimate
+
+    # Max speed dip after load step t >= t_L
+    mask_post = t >= p["t_L"]
+    min_after_load = float(np.min(omega[mask_post])) if np.any(mask_post) else float(np.min(omega))
+    speed_dip_pct = max(0.0, (w_ref - min_after_load) / w_ref * 100.0)
+
+    # Steady-state error at t = t_end (3 s)
+    ss_err_pct = abs(w_ref - float(omega[-1])) / w_ref * 100.0
+
+    return {
+        "t_s": t_s,
+        "t_s_unc_est": t_s_unc,
+        "pct_os": pct_os,
+        "speed_dip_pct": speed_dip_pct,
+        "ss_err_pct": ss_err_pct,
+    }
+
+
+# ==============================================================================
+# 6. EXAMPLE RUN & LABELED VERIFICATION
+# ==============================================================================
+if __name__ == "__main__":
+    sample_gains = (0.5, 2.0, 0.01)
+
+    t_rk4, X_rk4 = integrate_rk4(sample_gains, h=1e-4)
+    t_be, X_be = integrate_backward_euler(sample_gains, h=1e-3)
+
+    print("RK4 metrics (h=1e-4):", extract_metrics(t_rk4, X_rk4))
+    print("BE  metrics (h=1e-3):", extract_metrics(t_be, X_be))
+    print("Max |omega_RK4 - omega_BE| at matching 1e-3 grid:",
+          np.max(np.abs(X_rk4[::10, 1] - X_be[:, 1])))
+
+    # Example polynomial root finding test: (s + 10)(s + 20)(s^2 + 30s + 400)
+    p_test = np.convolve(np.convolve([1.0, 10.0], [1.0, 20.0]), [1.0, 30.0, 400.0])
+    roots_custom, _ = find_poly_roots_nr(p_test)
+    print("Custom NR roots (sorted by real, imag):",
+          np.sort_complex(roots_custom))
+
+    # --- Labeled Library Verification (not counted as custom implementations) ---
+    try:
+        from scipy.integrate import solve_ivp
+
+        sol_verify = solve_ivp(
+            lambda t, y: rhs_nonlinear(t, y, sample_gains),
+            (0.0, PARAMS["t_end"]),
+            np.zeros(4),
+            method="Radau",
+            rtol=1e-9,
+            atol=1e-11,
+        )
+        print("[VERIFICATION - scipy Radau] final omega:", sol_verify.y[1, -1])
+        print("[VERIFICATION - np.roots] poly roots:", np.sort_complex(np.roots(p_test)))
+    except ImportError:
+        print("[VERIFICATION] scipy not installed; skipping library cross-check.")
