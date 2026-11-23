@@ -64,3 +64,20 @@ def integrate_rk4(gains, h: float = 1e-4, p: dict = PARAMS):
         X[k + 1] = xk + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
     return t_grid, X
+
+def numerical_jacobian_G(x_next: np.ndarray, x_prev: np.ndarray, t_next: float, h: float, gains, p: dict):
+    """
+    Jacobian of implicit residual G(x_next) = x_next - x_prev - h * f(t_next, x_next)
+    via central finite differences (note piecewise kinks at saturation/load boundaries).
+    """
+    m = len(x_next)
+    J_mat = np.zeros((m, m), dtype=float)
+    eps = 1e-7
+    for j in range(m):
+        dx = np.zeros(m, dtype=float)
+        step = eps * max(1.0, abs(x_next[j]))
+        dx[j] = step
+        g_plus = (x_next + dx) - x_prev - h * rhs_nonlinear(t_next, x_next + dx, gains, p)
+        g_minus = (x_next - dx) - x_prev - h * rhs_nonlinear(t_next, x_next - dx, gains, p)
+        J_mat[:, j] = (g_plus - g_minus) / (2.0 * step)
+    return J_mat
