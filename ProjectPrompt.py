@@ -141,3 +141,76 @@ def cond_estimate_2norm(A: np.ndarray) -> float:
     """2-norm condition number via SVD (useful for comparing row/column scaling)."""
     s = np.linalg.svd(A, compute_uv=False)
     return float(s[0] / s[-1])
+
+# ==============================================================================
+# 4. COMPLEX NEWTON-RAPHSON ROOT FINDER (DEFLATION + POLISHING)
+# ==============================================================================
+def eval_poly_and_deriv(coeffs: np.ndarray, z: complex):
+    """
+    coeffs = [c_n, c_{n-1}, ..., c_0] for P(z) = sum c_k z^k using Horner's scheme.
+    """
+    p_val = 0j
+    dp_val = 0j
+    deg = len(coeffs) - 1
+    for idx, c in enumerate(coeffs):
+        power = deg - idx
+        if power > 0:
+            dp_val = dp_val * z + p_val
+        p_val = p_val * z + c
+    return p_val, dp_val
+
+
+def deflate_linear(coeffs: np.ndarray, root: complex) -> np.ndarray:
+    """Synthetic division of P(z) by (z - root)."""
+    out = np.zeros(len(coeffs) - 1, dtype=complex)
+    acc = 0j
+    for idx in range(len(coeffs) - 1):
+        acc = coeffs[idx] + root * acc
+        out[idx] = acc
+    return out
+
+
+def newton_single_root(coeffs: np.ndarray, z0: complex, tol: float = 1e-13, max_iter: int = 100):
+    z = complex(z0)
+    for it in range(1, max_iter + 1):
+        pz, dpz = eval_poly_and_deriv(coeffs, z)
+        if abs(pz) < tol:
+            return z, it, True
+        if abs(dpz) < 1e-16:
+            z += 1e-4 * (1.0 + 1j)
+            continue
+        dz = pz / dpz
+        z -= dz
+        if abs(dz) < tol * max(1.0, abs(z)):
+            return z, it, True
+    return z, max_iter, False
+
+
+def find_poly_roots_nr(coeffs: np.ndarray, seeds=None):
+    """Finds all roots via deflation, then polishes each on the original polynomial."""
+    orig = np.array(coeffs, dtype=complex)
+    while len(orig) > 1 and abs(orig[0]) < 1e-16:
+        orig = orig[1:]
+    deg = len(orig) - 1
+    if deg <= 0:
+        return np.array([], dtype=complex), []
+
+    if seeds is None:
+        # Asymmetric complex seeds off the real axis to encourage complex conjugate pairs
+        radius = 1.0 + float(np.max(np.abs(orig[1:])) / abs(orig[0]))
+        seeds = [radius * np.exp(1j * (2.0 * np.pi * k / deg + 0.37)) for k in range(deg)]
+
+    active = orig.copy()
+    raw_roots = []
+    logs = []
+
+    for k in range(deg):
+        seed = seeds[k % len(seeds)]
+        r_defl, it_d, conv_d = newton_single_root(active, seed)
+        # Polish on original un-deflated polynomial
+        r_pol, it_p, conv_p = newton_single_root(orig, r_defl)
+        raw_roots.append(r_pol)
+        logs.append((k + 1, seed, r_pol, it_d, conv_d, it_p, conv_p))
+        active = deflate_linear(active, r_defl)
+
+    return np.array(raw_roots, dtype=complex), logs
