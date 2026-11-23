@@ -106,3 +106,38 @@ def integrate_backward_euler(gains, h: float = 1e-3, p: dict = PARAMS, tol: floa
         X[k + 1] = x_curr
 
     return t_grid, X
+
+# ==============================================================================
+# 3. GAUSSIAN ELIMINATION WITH PARTIAL PIVOTING & CONDITION NUMBER
+# ==============================================================================
+def solve_linear_pp(A: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Solves Ax = b using Gaussian elimination with partial pivoting (NumPy)."""
+    A = np.array(A, dtype=float, copy=True)
+    b = np.array(b, dtype=float, copy=True)
+    n = len(b)
+
+    for col in range(n - 1):
+        pivot_row = col + int(np.argmax(np.abs(A[col:, col])))
+        if np.isclose(A[pivot_row, col], 0.0, atol=1e-15):
+            raise ValueError("Matrix is singular or nearly singular.")
+        if pivot_row != col:
+            A[[col, pivot_row]] = A[[pivot_row, col]]
+            b[[col, pivot_row]] = b[[pivot_row, col]]
+
+        factors = A[col + 1 :, col] / A[col, col]
+        A[col + 1 :, col:] -= factors[:, None] * A[col, col:]
+        b[col + 1 :] -= factors * b[col]
+
+    if np.isclose(A[-1, -1], 0.0, atol=1e-15):
+        raise ValueError("Matrix is singular or nearly singular.")
+
+    x = np.zeros(n, dtype=float)
+    for row in range(n - 1, -1, -1):
+        x[row] = (b[row] - np.dot(A[row, row + 1 :], x[row + 1 :])) / A[row, row]
+    return x
+
+
+def cond_estimate_2norm(A: np.ndarray) -> float:
+    """2-norm condition number via SVD (useful for comparing row/column scaling)."""
+    s = np.linalg.svd(A, compute_uv=False)
+    return float(s[0] / s[-1])
