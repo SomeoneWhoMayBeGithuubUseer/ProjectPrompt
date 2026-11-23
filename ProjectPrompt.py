@@ -45,3 +45,22 @@ def rhs_nonlinear(t: float, x: np.ndarray, gains: tuple[float, float, float], p:
     domega = (p["K"] * i - p["b"] * omega - T_L) / p["J"]
 
     return np.array([di, domega, dx_I, dz], dtype=float)
+
+# ==============================================================================
+# 2. ODE INTEGRATORS: FIXED-STEP RK4 & BACKWARD EULER + NEWTON
+# ==============================================================================
+def integrate_rk4(gains, h: float = 1e-4, p: dict = PARAMS):
+    n_steps = int(np.round(p["t_end"] / h))
+    t_grid = np.linspace(0.0, n_steps * h, n_steps + 1)
+    X = np.zeros((n_steps + 1, 4), dtype=float)
+
+    for k in range(n_steps):
+        tk = t_grid[k]
+        xk = X[k]
+        k1 = rhs_nonlinear(tk, xk, gains, p)
+        k2 = rhs_nonlinear(tk + 0.5 * h, xk + 0.5 * h * k1, gains, p)
+        k3 = rhs_nonlinear(tk + 0.5 * h, xk + 0.5 * h * k2, gains, p)
+        k4 = rhs_nonlinear(tk + h, xk + h * k3, gains, p)
+        X[k + 1] = xk + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+    return t_grid, X
